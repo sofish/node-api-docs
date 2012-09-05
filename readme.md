@@ -155,7 +155,7 @@ console.assert(1===0, '出错了')
 //    at Object.exports.assert (console.js:75:23)
 //    ...
 
-// 如果不指定 message，则返回表达式本身
+// 如果不指定 message，则返回表达式计算结果
 console.assert(1==0)
 // AssertionError: false == true
 //    at Object.exports.assert (console.js:75:23)
@@ -163,5 +163,117 @@ console.assert(1==0)
 ```
 
 可能和你常用的测试用例的写法一样。当然，你完全可以用它来做测试用例，或者代替 `throw new Error('hello')`。
+
+## 三、计时器
+
+### 1. setTimeout(callback, delay, [arg], [...])
+
+如上面提到的，`callback` 将会在 `delay` 后执行，执行结果返回一个 `timeoutId` 以便可以使用 `clearTimeout(timeoutId)` 来阻止执行这个计时器。而从第三个参数起，传入参数将作为 `callback` 的参数。
+
+### 2. setInterval(callback, delay, [arg], [...])
+
+参数同 `setTimeout`，功能上 `setTimeout` 只执行一次，而 `setInterval` 则会循环执行。返回一个 `intervalId`，可以使用 `clearInterval(intervalId)` 来停下循环。
+
+## 四、模块
+
+Node 自带一个简单的模块加载系统，文件即模板，它可以通过 `require()` 来加载，比如在 foo.js 中加载一个同目录下的 circle.js，我们可以这样做：
+
+foo.js 中的内容：
+```js
+var circle = require('./circle.js');
+console.log( 'The area of a circle of radius 4 is ' + circle.area(4));
+```
+
+circle.js 中的内容：
+```js
+var PI = Math.PI;
+
+exports.area = function (r) {
+  return PI * r * r;
+};
+
+exports.circumference = function (r) {
+  return 2 * PI * r;
+};
+```
+
+由于在 Node 中模块中定义的变量仅为模块私有而非全局变量，因此当需要在引用了当前模块的模块内使用，需要用 `exports` 来导出。如上述 circle.js 中导出了 `area()` 和 `circumference()` 两个方法，将可以在 foo.js 中使用。
+
+### 1. 循环引用
+
+当使用 `require()` 循环引用时，一个模块返回的时候可能仍未被执行。考虑一下正面的情况：
+
+a.js:
+
+```js
+console.log('a starting');
+exports.done = false;
+var b = require('./b.js');
+console.log('in a, b.done = %j', b.done);
+exports.done = true;
+console.log('a done');
+```
+
+b.js:
+
+```js
+console.log('b starting');
+exports.done = false;
+var a = require('./a.js');
+console.log('in b, a.done = %j', a.done);
+exports.done = true;
+console.log('b done');
+```
+
+main.js
+
+```js
+console.log('main starting');
+var a = require('./a.js');
+var b = require('./b.js');
+console.log('in main, a.done=%j, b.done=%j', a.done, b.done);
+````
+
+当 main.js 加载 a.js，a.js 尝试加载 b.js。在这个时间，b.js 也尝试加载 a.js。为了防止死循环，一个不完全的 a.js 模块副本将会作为在 b.js 这个模块中所调用 a.js 的返回值，b.js 由于得到返回而完成这个加载的过程，而它在 a.js 中被调用，而将本身 `exports` 返回给 a.js。
+
+这时，main.js 也完成了对两个模块的加载，它最终将会返回正面的数据：
+
+```ruby
+$ node main.js
+main starting
+a starting
+b starting
+in b, a.done = false
+b done
+in a, b.done = true
+a done
+in main, a.done=true, b.done=true
+```
+
+也就是说，你可能需要注意一下不要循环调用以获得更高的性能，一旦你不小心这样搞了，Node 也会帮你阻止这个死循环。
+
+### 2. 内置模块
+
+Node 自身编译了一批内置模块。这些模块也将在这个文档中被详细介绍。它们定义于 Node 源文件的 `lib/` 目录下。
+
+值得注意的是，内置模块总是优先被加载，就拿 `require('http')` 来说，将会返回 HTTP 模块，即使当前目录存在一个 `http.js` 或者 `http/index.js`。 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
