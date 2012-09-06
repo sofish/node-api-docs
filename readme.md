@@ -258,6 +258,265 @@ Node 自身编译了一批内置模块。这些模块也将在这个文档中被
 
 值得注意的是，内置模块总是优先被加载，就拿 `require('http')` 来说，将会返回 HTTP 模块，即使当前目录存在一个 `http.js` 或者 `http/index.js`。 
 
+### 3. 归存模块
+
+当一个特定的文件名找不到的时候，Node 将会尝试按顺序加载带有 `.js` 、`.json` 或 `.node` 扩展名的文件。`.js`、`.json` 分别被解析为 JavaScript 和 JSON 文件，而 `.node` 则被解析为由 `dlopen` 来加载的编译插件。
+
+模块路径以 `/` 前缀开始，表示加载以绝对路径出现的模块，比如，`require('/home/marco/foo.js')` 将会加载这个文件 `/home/marco/foo.js`；而以 `./` 则表示所加载的模块路径为相对路径，相对于引用 `require()` 的当前模块；当模块路径不以 `/` 或者 `./` 前缀出现，这个模块非内置模块，即加载自 `node_modules/` 目录。
+
+当给定的模块路径不存在，则 `require()` 会抛出一个包含有属性名 `code`，值为 `MODULE_NOT_FOUND` 的错误。 
+
+### 4. 从 node_modules/ 目录加载
+
+当传到 `require()` 的模块标识符并不是内置模块，并且不以 `../`、`./`、`/` 前缀开始，Node 将会从该模块父目录下的 `node_modules/` 目录开始寻找这个模块，若模块未找到，则不断向上查找直到根目录。
+
+打个比方，如果 `/home/ry/projects/foo.js` 调用了 `require('bar.js')`，那么 Node 可能会从正面这些位置按顺序查找：
+
+- /home/ry/projects/node_modules/bar.js
+- /home/ry/node_modules/bar.js
+- /home/node_modules/bar.js
+- /node_modules/bar.js
+
+这对于为个别项目做依赖的特殊化处理有着非常好的优势，且避免了冲突。
+
+### 5. 将目录当做模块
+
+将程序或库所有内容放置于同一个目录下，并导出一个统一的对外接口，这将会方便其自身的管理。将文件传入到 `require()` 中作为一个模块，有正面两种方式：
+
+1. 在当前模块根目录放置一个 package.json 文件，在其中的 `main` 属性中指定一个模块，文件内容大致如下：
+
+ ```js
+ // 如果这个文件位于 ./some-library，那么 require('./some-library')
+ // 将会加载 ./some-library/lib/some-library.js
+ {
+   "name": "some-library",
+   "main": "./lib/some-library.js"
+ }
+ ```
+
+2. 当模块根目录下没有 package.json 文件，这时 Node 会尝试加载这个目录下的 `index.js` 或 `index.node` 文件。如 `require('./some-libray')` 将会尝试加载：
+
+ - ./some-library/index.js
+ - ./some-library/index.node
+
+### 6. 缓存
+
+模块在第一次 `require()` 的时候将会被缓存起来，也即当多次调用 `require('foo.js')` 的时候，模块将不会被再一次执行，这将从很大程度上提升了 Node 模块加载的性能。
+
+如果你想多次执行代码，那么你可以将模块导出于一个函数内，然后调用这个模块；当然，还有另一种方式，就是改变 `require.cache` 对象中相应属性的值。
+
+```js
+// mod.js
+var Fish = function(name){
+  this.name = name;
+  ...
+}
+
+module.exports = function(name){
+  return new Fish(name);
+}
+```
+
+### 7. Module 缓存贴示
+
+由于模块的查找总是基于文件，有些模块可能由于请求该模块文件位置的关系（从 `node_modules` 目录加载），将不能保证每次 `require('foo')` 放置在不同的位置请求到的都是同一个文件。这是需要注意的。
+
+
+### 8. module 对象
+
+在每一个模块中，module 变量总是为当前模块本身的一个引用。再一次提醒，像上面提到的 `module.exports` 与 `exports` 是等价的。
+
+#### 8.1 module.exports {Object}
+
+这在上面我们已经谈过，有两段代码实例可以看一下：
+
+```js
+// a.js
+var EventEmitter = require('events').EventEmitter;
+
+module.exports = new EventEmitter();
+
+// Do some work, and after some time emit
+// the 'ready' event from the module itself.
+setTimeout(function() {
+  module.exports.emit('ready');
+}, 1000);
+```
+
+引用了 a.js 的文件：
+
+```js
+var a = require('./a');
+a.on('ready', 
+function() {
+  console.log('module a is ready');
+});
+```
+
+这里值得注意的是，`module.exports` 的调用必须是即时的，在回调中执行导出将不会有任何效果，考虑一下正面的代码：
+
+x.js
+
+```js
+setTimeout(function() {
+  module.exports = { a: "hello" };
+}, 0);
+```
+
+y.js
+
+```js
+var x = require('./x');
+console.log(x.a);
+```
+
+x.js 中的模块将会不会在 y.js 中生效。
+
+#### 8.2 module.require(id)
+
+- id: {String}
+- return: `require(id)` 一样模块导出对象
+
+实际上 `require(id) === module.require(id)`，想吐槽一下这 api 存在的意义。不过虽然实现上是这样，但 Node 并不这样认为，可以参考一下这个 issue 上的描述：[module.require === require](https://github.com/joyent/node/pull/3940)
+
+#### 8.3 module.id {String}
+
+模块标识，通常来说是一个完整的绝对路径。
+
+#### 8.4 module.filename {String}
+
+返回一个绝对路径。
+
+#### 8.4 module.loaded {Boolean}
+
+模块是否加载完成。
+
+#### 8.5 module.parent {Object}
+
+加载当前模块的父模块。
+
+#### 8.6 module.children {Array}
+
+当前模块所加载的模块。
+
+### 9. 关于模块的（几乎）所有内容放在一起
+
+如需得到 `require()` 所加载模块的文件名，可以使用 `require.resolve()` 方法。正面是关于这个方法如何运行的算法伪代码（这段不好写，直接看）：
+
+```js
+require(X) from module at path Y
+1. If X is a core module,
+   a. return the core module
+   b. STOP
+2. If X begins with './' or '/' or '../'
+   a. LOAD_AS_FILE(Y + X)
+   b. LOAD_AS_DIRECTORY(Y + X)
+3. LOAD_NODE_MODULES(X, dirname(Y))
+4. THROW "not found"
+
+LOAD_AS_FILE(X)
+1. If X is a file, load X as JavaScript text.  STOP
+2. If X.js is a file, load X.js as JavaScript text.  STOP
+3. If X.node is a file, load X.node as binary addon.  STOP
+
+LOAD_AS_DIRECTORY(X)
+1. If X/package.json is a file,
+   a. Parse X/package.json, and look for "main" field.
+   b. let M = X + (json main field)
+   c. LOAD_AS_FILE(M)
+2. If X/index.js is a file, load X/index.js as JavaScript text.  STOP
+3. If X/index.node is a file, load X/index.node as binary addon.  STOP
+
+LOAD_NODE_MODULES(X, START)
+1. let DIRS=NODE_MODULES_PATHS(START)
+2. for each DIR in DIRS:
+   a. LOAD_AS_FILE(DIR/X)
+   b. LOAD_AS_DIRECTORY(DIR/X)
+
+NODE_MODULES_PATHS(START)
+1. let PARTS = path split(START)
+2. let ROOT = index of first instance of "node_modules" in PARTS, or 0
+3. let I = count of PARTS - 1
+4. let DIRS = []
+5. while I > ROOT,
+   a. if PARTS[I] = "node_modules" CONTINUE
+   c. DIR = path join(PARTS[0 .. I] + "node_modules")
+   b. DIRS = DIRS + DIR
+   c. let I = I - 1
+6. return DIRS
+```
+
+### 10. 从全局路径加载
+
+当给 `NODE_PATH` 环境变量赋以一个以冒号（在 windows 下是分号）分割的绝对路径列表，Node 将会从这个列表中去加载模块。另外，Node 还将查找以下的几个位置：
+
+- $HOME/.node_modules
+- $HOME/.node_libraries
+- $PREFIX/lib/node
+
+在这里 $HOME 是用户的主目录，而 $PREFIX 则是 Node configured 的 `node_prefix` 值。
+
+这些路径大多具备其历史意义，但推荐你把模块放置于项目本地的 `node_modules/` 目录下，因为这会让你的模块加载更快，并且更可靠。
+
+### 11. 访问本模块
+
+当一个文件直接以 `$ node filename.js` 的模式运行， `require.main` 被设置为 `module` 对象。这意味着你可以知道当前模块是被直接执行，还是因为被访问而执行。比如我们运行 `$ node foo.js` 这时：
+
+```js
+require.main === module; // true
+```
+
+如果我们使用 `require('./foo.js')` 则：
+
+```js
+require.main === module; // false
+```
+
+另外，由于 `module` 提供了一个 `filename` 属性（一般情况下它等价于 `__filename`），那么当前运行的程序路径可以通过 `require.main.filename` 来访问。
+
+### 12. 附录：模块管理贴示
+
+Node 所提供的 `require()` 从很大程度上可以满足应用的设计而不需要修改就能加载到相应的模块。但当模块之前的引用层级不定和程序引用的位置不同，还是可能出现总是。Node 提供一种模块管理的建议：
+
+
+- /usr/lib/node/foo/1.2.3/ - foo 包，版本 1.2.3.
+- /usr/lib/node/bar/4.3.2/ - foo 所依赖的 bar，版本 4.3.2 
+- /usr/lib/node/foo/1.2.3/node_modules/bar - 链接到 /usr/lib/node/bar/4.3.2/
+- /usr/lib/node/bar/4.3.2/node_modules/* - 链接到其他依赖的模块
+
+这样即使遇到循环引用，抑或引用冲突，这些模块也可以去使用某些可用的版本。不过这看起来还是有点乱。或许我们可以考虑下面的方式：
+
+- /foo/
+- /foo/node_modules/bar
+- /foo/node_modules/bar/node_modules
+
+把 foo 模块的所有依赖模块都放置于目录中，在 foo/ 放置 node_modules 目录来存放依赖模块。考虑一下 derby.js 的这个模块管理设计：
+
+node_modules
+├── derby
+├── express
+│   └── node_modules
+├── gzippo
+│   └── node_modules
+└── racer-db-mongo
+    └── node_modules
+    
+其他的 Node 说了一大堆，感觉用处不大。详见：[Package Manager Tips](http://nodejs.org/api/all.html#all_addenda_package_manager_tips)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
