@@ -492,6 +492,7 @@ Node 所提供的 `require()` 从很大程度上可以满足应用的设计而�
 
 把 foo 模块的所有依赖模块都放置于目录中，在 foo/ 放置 node_modules 目录来存放依赖模块。考虑一下 derby.js 的这个模块管理设计：
 
+```bash
 node_modules
 ├── derby
 ├── express
@@ -500,6 +501,7 @@ node_modules
 │   └── node_modules
 └── racer-db-mongo
     └── node_modules
+```
     
 其他的 Node 说了一大堆，感觉用处不大。详见：[Package Manager Tips](http://nodejs.org/api/all.html#all_addenda_package_manager_tips)
 
